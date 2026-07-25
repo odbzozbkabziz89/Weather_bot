@@ -15,7 +15,6 @@ Tehran Weather Reporter — Telegram Userbot (Pyrogram)
   5) WeatherAPI.com (اختیاری)       -> منبع چهارم، فقط اگر WEATHER_API_KEY تنظیم شده باشد
 
 قابلیت‌های اضافی (هرکدام با env var قابل خاموش/روشن کردن):
-  - 📊 نمودار روند دمای امروز (تصویر PNG ارسالی به کانال قبل از متن گزارش)
   - 🚨 هشدار فوری و مستقل برای گرمای شدید / سرمای شدید / آلودگی هوای خطرناک
   - 🔮 پیش‌بینی خلاصهٔ ۲ روز آینده در انتهای گزارش
   - 🔁 مقایسهٔ دمای لحظه‌ای با همین ساعت دیروز (بر اساس تاریخچهٔ محلی SQLite)
@@ -32,9 +31,6 @@ from statistics import mean
 
 import pytz
 import aiohttp
-import matplotlib
-matplotlib.use("Agg")  # بدون نیاز به نمایشگر، مناسب سرور
-import matplotlib.pyplot as plt
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -66,7 +62,6 @@ REPORT_MINUTE = int(os.environ.get("REPORT_MINUTE", 0))
 RUN_ON_START = os.environ.get("RUN_ON_START", "false").lower() == "true"
 
 # --- ویژگی‌های اضافی (هرکدام قابل خاموش/روشن‌کردن) ---
-ENABLE_CHART = os.environ.get("ENABLE_CHART", "true").lower() == "true"
 ENABLE_ALERTS = os.environ.get("ENABLE_ALERTS", "true").lower() == "true"
 ENABLE_HISTORY = os.environ.get("ENABLE_HISTORY", "true").lower() == "true"
 
@@ -278,27 +273,6 @@ async def fetch_met_norway(session: aiohttp.ClientSession):
         return None
 
 
-async def fetch_hourly_forecast(session: aiohttp.ClientSession):
-    """دمای ساعتی امروز — برای رسم نمودار روند دما."""
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": TEHRAN_LAT,
-        "longitude": TEHRAN_LON,
-        "hourly": "temperature_2m",
-        "timezone": "Asia/Tehran",
-        "forecast_days": 1,
-    }
-    try:
-        async with session.get(url, params=params, timeout=15) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
-            hourly = data["hourly"]
-            return {"times": hourly["time"], "temps": hourly["temperature_2m"]}
-    except Exception as e:
-        logger.warning(f"Hourly forecast fetch failed: {e}")
-        return None
-
-
 async def fetch_3day_forecast(session: aiohttp.ClientSession):
     """پیش‌بینی خلاصهٔ ۳ روز آینده."""
     url = "https://api.open-meteo.com/v1/forecast"
@@ -325,32 +299,6 @@ async def fetch_3day_forecast(session: aiohttp.ClientSession):
             return days
     except Exception as e:
         logger.warning(f"3-day forecast fetch failed: {e}")
-        return None
-
-
-# ---------------------------------------------------------------------------
-# نمودار روند دما (تصویر)
-# ---------------------------------------------------------------------------
-def build_temperature_chart(hourly_data, path="chart_temp.png"):
-    """یک نمودار PNG ساده از روند دمای امروز می‌سازد و مسیر فایل را برمی‌گرداند."""
-    if not hourly_data or not hourly_data.get("times"):
-        return None
-    try:
-        times = [t.split("T")[1] for t in hourly_data["times"]]  # فقط ساعت
-        temps = hourly_data["temps"]
-
-        plt.figure(figsize=(9, 4))
-        plt.plot(times, temps, color="#ff7f0e", linewidth=2.5, marker="o", markersize=3)
-        plt.fill_between(range(len(times)), temps, color="#ff7f0e", alpha=0.12)
-        plt.title("روند دمای امروز - تهران (°C)", fontsize=13)
-        plt.xticks(range(0, len(times), 2), [times[i] for i in range(0, len(times), 2)], rotation=45)
-        plt.grid(alpha=0.25)
-        plt.tight_layout()
-        plt.savefig(path, dpi=130)
-        plt.close()
-        return path
-    except Exception as e:
-        logger.warning(f"Chart generation failed: {e}")
         return None
 
 
@@ -649,16 +597,12 @@ async def check_and_send_alerts(app: Client, temp_max, temp_min, aqi):
 async def send_daily_report(app: Client):
     logger.info("در حال دریافت اطلاعات آب‌وهوا از منابع مختلف...")
     async with aiohttp.ClientSession() as session:
-        (
-            open_meteo, aqi, wttr, weatherapi, met_norway,
-            hourly_forecast, forecast_3day,
-        ) = await asyncio.gather(
+        open_meteo, aqi, wttr, weatherapi, met_norway, forecast_3day = await asyncio.gather(
             fetch_open_meteo(session),
             fetch_air_quality(session),
             fetch_wttr(session),
             fetch_weatherapi(session),
             fetch_met_norway(session),
-            fetch_hourly_forecast(session) if ENABLE_CHART else asyncio.sleep(0, result=None),
             fetch_3day_forecast(session),
         )
 
@@ -669,23 +613,6 @@ async def send_daily_report(app: Client):
         open_meteo, aqi, wttr, weatherapi, met_norway,
         forecast_3day=forecast_3day, yesterday_diff=yesterday_diff,
     )
-
-    # --- ارسال نمودار روند دما (در صورت فعال بودن) ---
-    chart_path = None
-    if ENABLE_CHART and hourly_forecast:
-        chart_path = build_temperature_chart(hourly_forecast)
-
-    if chart_path:
-        try:
-            await app.send_photo(
-                CHANNEL_ID, chart_path,
-                caption="📊 روند دمای امروز تهران", parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            logger.error(f"ارسال نمودار ناموفق بود (متن گزارش همچنان ارسال می‌شود): {e}")
-        finally:
-            if os.path.exists(chart_path):
-                os.remove(chart_path)
 
     try:
         await app.send_message(CHANNEL_ID, report_text, parse_mode=ParseMode.HTML)
