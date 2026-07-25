@@ -3,5 +3,3 @@ tgcrypto==1.2.5
 apscheduler==3.10.4
 aiohttp==3.9.5
 pytz==2024.1
-matplotlib==3.9.0
-
