@@ -721,6 +721,17 @@ async def main():
         me = await app.get_me()
         logger.info(f"با اکانت «{me.first_name}» با موفقیت وارد شدیم.")
 
+        # برای این‌که Pyrogram بتواند CHANNEL_ID عددی (مثل -100xxxxxxxxxx) را
+        # resolve کند، باید یک‌بار کش داخلی peer ها با خواندن لیست چت‌ها پر شود.
+        # بدون این کار، ارسال پیام با ValueError: Peer id invalid شکست می‌خورد.
+        logger.info("در حال آماده‌سازی کش چت‌ها (برای resolve شدن CHANNEL_ID)...")
+        try:
+            async for _ in app.get_dialogs():
+                pass
+            logger.info("کش چت‌ها با موفقیت آماده شد.")
+        except Exception as e:
+            logger.warning(f"آماده‌سازی کش چت‌ها با خطا مواجه شد: {e}")
+
         scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
         if REPORT_MODE == "daily":
